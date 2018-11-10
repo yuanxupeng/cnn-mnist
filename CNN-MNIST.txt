@@ -1,0 +1,96 @@
+'''预测Titanic事件中谁能获救'''
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+''''以下所有的数据操作都是在数据类型是pd.DataFrame类型的基础上进行的'''
+
+#读入数据并显示出前几行以便进行数据的观察
+titanic=pd.read_csv('train.csv')
+print(titanic.head(4))
+print(titanic.describe())#统计数值型数据每列属性的不同值，比如均值、方差等,从count属性可以知道是否有缺失值
+
+#‘Age’属性列因为有缺失值，我们首先需要把缺失值补上，对于数值型通常的做法是用median取中间的值,而mean是取平均值
+titanic['Age']=titanic['Age'].fillna(titanic['Age'].median())#用Age属性列的中间值进行填充
+print(titanic.describe())#再次进行统计看Age列是否发生了变化
+
+#'Sex'列中的属性值是str型，但是机器只能识别int或float型，所以需要将str转换为机器可以识别的类型
+print(titanic['Sex'].unique())#显示Sex列有几个不同的值,这里只有male和female两种
+titanic.loc[titanic['Sex']=='male','Sex']=0#让0代表男性
+titanic.loc[titanic['Sex']=='female','Sex']=1#让1代表女性
+
+#Embarked列也有属性值缺失，对于字符型通常的做法是用出现次数最多的值来填补
+print(titanic['Embarked'].unique())
+print(titanic['Embarked'].value_counts())#统计Emabrked列每个元素出现的次数,发现S出现的次数最多
+titanic['Embarked']=titanic['Embarked'].fillna('S')
+titanic.loc[titanic['Embarked']=='S','Embarked']=0
+titanic.loc[titanic['Embarked']=='C','Embarked']=1
+titanic.loc[titanic['Embarked']=='Q','Embarked']=2
+
+from sklearn.linear_model import LogisticRegression
+from sklearn import cross_validation#这里用的是交叉验证方法
+predictors=['Pclass','Sex','Age','SibSp','Parch','Fare','Embarked']
+alg=LogisticRegression()
+scores=cross_validation.cross_val_score(alg,titanic[predictors],titanic['Survived'],cv=3)
+print(scores.mean())
+
+from sklearn.ensemble import RandomForestClassifier
+#from sklearn.cross_validation import KFold
+alg1=RandomForestClassifier(random_state=1,n_estimators=50,min_samples_split=2,min_samples_leaf=1)
+kf=cross_validation.KFold(titanic.shape[0],n_folds=3,random_state=1)
+scores1=cross_validation.cross_val_score(alg1,titanic[predictors],titanic['Survived'],cv=kf)
+print(scores1.mean())
+
+#通过逻辑回归和随机森林算法，我们发现最后的得分都相对较低，说明我们还有需要改进的地方，下面从特征提取方面入手
+titanic["FamilySize"]=titanic['SibSp']+titanic['Parch']#由两个属性列产生一个新的属性列
+titanic['NameLength']=titanic["Name"].apply(lambda x:len(x))#计算Name列每个名字的长度,将名字的长度也创建一个新的属性列
+
+import re
+def get_title(name):
+    title_search=re.search('([A-Za-z]+)\.',name)
+    if title_search:
+        return title_search.group(1)
+    return ""
+
+titles=titanic["Name"].apply(get_title)#将Name列中每个元素应用到get_title函数
+print(titles)
+title_mapping={'Mr':1,'Miss':2,'Mrs':3,'Master':4,'Dr':5,'Rev':6,'Mlle':7,'Major':8,
+               'Col':9,'Don':10,'Mme':11,'Jonkheer':12,'Ms':13,'Countess':14,
+               'Lady':15,'Sir':16,'Capt':17}#用int型代替str型
+for k,v in title_mapping.items():
+    titles[titles==k]=v#布尔型索引，每次让行等于字符型k的值等于整型v
+    
+print(titles.value_counts())
+titanic['Title']=titles#创建一个Title列
+
+#在原有列的基础上，虽然我们创建了新的列，但是我们并不清楚哪个属性更重要，哪个属性不重要，甚至起到副作用，需要判定一下
+from sklearn.feature_selection import SelectKBest,chi2,f_classif
+predictors=['Pclass','Sex','Age','SibSp','Parch','Fare','Embarked','FamilySize','Title','NameLength']
+selector=SelectKBest(chi2,k=5)
+selector.fit(titanic[predictors],titanic["Survived"])
+scores=-np.log10(selector.pvalues_)
+plt.bar(range(len(predictors)),scores)#柱状图代表的是每个特征的重要性程度
+plt.xticks(range(len(predictors)),predictors,rotation='vertical')
+plt.show()
+
+selector1=SelectKBest(f_classif,k=5)
+selector1.fit(titanic[predictors],titanic["Survived"])
+scores1=-np.log10(selector1.pvalues_)
+plt.bar(range(len(predictors)),scores1)#柱状图代表的是每个特征的重要性程度
+plt.xticks(range(len(predictors)),predictors,rotation='vertical')
+plt.show()
+
+#通过chi2挑选出的4个最好的特征进行计算
+predictors1=['Pclass','Sex','Title','NameLength']
+alg2=RandomForestClassifier(random_state=1,n_estimators=50,min_samples_split=2,min_samples_leaf=1)
+kf=cross_validation.KFold(titanic.shape[0],n_folds=3,random_state=1)
+scores2=cross_validation.cross_val_score(alg2,titanic[predictors1],titanic['Survived'],cv=kf)
+print(scores2.mean())
+
+#通过f_classif挑选出的4个最好的特征进行计算
+predictors2=['Pclass','Sex','Fare','Title']
+alg3=RandomForestClassifier(random_state=1,n_estimators=50,min_samples_split=2,min_samples_leaf=1)
+kf=cross_validation.KFold(titanic.shape[0],n_folds=3,random_state=1)
+scores3=cross_validation.cross_val_score(alg3,titanic[predictors2],titanic['Survived'],cv=kf)
+print(scores3.mean())
